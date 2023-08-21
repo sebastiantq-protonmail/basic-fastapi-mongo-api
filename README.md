@@ -4,28 +4,28 @@ Descripción breve del proyecto.
 
 ## Estructura del Proyecto
 
-.
-├── app
-│   ├── api
-│   │   ├── adapters
-│   │   │   └── README.md  # Adapters explanation for external services.
-│   │   ├── auth
-│   │   │   └── auth.py  # Authentication related operations.
-│   │   ├── config
-│   │   │   ├── db.py  # Database configuration.
-│   │   │   ├── env.py  # Environment variables.
-│   │   │   └── exceptions.py  # Project-specific exceptions.
-│   │   ├── methods
-│   │   │   └── README.md  # Utility functions explanation for routes.
-│   │   ├── models
-│   │   │   └── models.py  # Pydantic models.
-│   │   └── routes
-│   │       └── routes.py  # API routes.
-│   ├── app.py  # Entry point for the FastAPI application.
-└── .env.basic
-└── Dockerfile
-└── README.md
-└── requirements.txt
+. \
+├── app \
+│   ├── api \
+│   │   ├── adapters \
+│   │   │   └── README.md  # Adapters explanation for external services. \
+│   │   ├── auth \
+│   │   │   └── auth.py  # Authentication related operations. \
+│   │   ├── config \
+│   │   │   ├── db.py  # Database configuration. \
+│   │   │   ├── env.py  # Environment variables. \
+│   │   │   └── exceptions.py  # Project-specific exceptions. \
+│   │   ├── methods \
+│   │   │   └── README.md  # Utility functions explanation for routes. \
+│   │   ├── models \
+│   │   │   └── models.py  # Pydantic models. \
+│   │   └── routes \
+│   │       └── routes.py  # API routes. \
+│   ├── app.py  # Entry point for the FastAPI application. \
+└── .env.example \
+└── Dockerfile \
+└── README.md \
+└── requirements.txt \
 
 ## Instrucciones de Configuración
 
