@@ -1,31 +1,41 @@
-from fastapi import APIRouter, HTTPException, Depends, Response, status
+from fastapi import APIRouter, HTTPException, Request, Depends, status
+from slowapi.errors import RateLimitExceeded
 from bson import ObjectId
 from typing import List
+import pymongo.errors
+import logging
 
-# Configuration, models and authentication modules imports
-from app.api.config import db
-from app.api.config.exceptions import bugReportsInstance
-from app.api.config.env import JIRA_PROJECT_ID
-from app.api.models.models import ItemCreate, Item
+# Configuration, models, methods and authentication modules imports
+from app.api.config.db import database
+from app.api.config.limiter import limiter
+from app.api.config.env import API_NAME
+from app.api.models.models import ResponseError, ItemPatch, ItemCreate, Item
 from app.api.auth.auth import auth_handler
+from app.api.methods.methods import is_valid_objectid, convert_objectid_to_str, handle_error
 
 router = APIRouter()
 
-"""
-The following document contains a basic CRUD of 'Items', 
-you can change the Item's model according to your requirements and add new endpoints for new operations.
+# Log file name
+log_filename = f"api_{API_NAME}.log"
 
-Good luck <3
-ST.
-"""
+# Configurate the logging level to catch all messages from DEBUG onwards
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s [%(levelname)s] - %(message)s',
+                    handlers=[logging.FileHandler(log_filename),
+                              logging.StreamHandler()])
 
-# Centralized error handler
-def handle_error(e: Exception):
-    bugReportsInstance.bugReports(JIRA_PROJECT_ID, "[DEVELOPER]", str(e))
-    raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+logger = logging.getLogger(__name__)
 
-@router.post('/items/', response_model=Item, status_code=status.HTTP_201_CREATED, tags=["CRUD"])
-def create_item(item: ItemCreate, auth=Depends(auth_handler.authenticate)):
+@router.post('/items/', 
+             response_model=Item, 
+             status_code=status.HTTP_201_CREATED, 
+             tags=["CRUD"],
+             responses={
+                 500: {"model": ResponseError, "description": "Internal server error."},
+                 429: {"model": ResponseError, "description": "Too many requests."}
+             })
+@limiter.limit("5/minute")
+def create_item(item: ItemCreate, request: Request):#, auth=Depends(auth_handler.authenticate)):
     """Create a new item in the database.
     
     Args:
@@ -35,28 +45,75 @@ def create_item(item: ItemCreate, auth=Depends(auth_handler.authenticate)):
     - Item: Created item with its ID.
     """
     try:
-        new_item = db.database.items.insert_one(item.dict())
-        item.id = str(new_item.inserted_id)
+        logger.info("Creating a new item.")
+        new_item = database.items.insert_one(item.dict())
+        if not new_item.inserted_id:
+            logger.warning("Failed to create a new item.")
+            raise HTTPException(status_code=500, detail="Item creation failed.")
+        logger.info(f"Item with ID {str(new_item.inserted_id)} successfully created.")
+        item = item.dict()
+        item["id"] = str(new_item.inserted_id)
         return item
+    except pymongo.errors.PyMongoError as e:
+        # Handle any PyMongo errors here
+        logger.critical(f"Error interacting with the database: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error updating password.")
+    except RateLimitExceeded:
+        raise HTTPException(status_code=429, detail="Too many requests.")
+    except HTTPException:
+        # This is to ensure HTTPException is not caught in the generic Exception
+        raise
     except Exception as e:
-        handle_error(e)
+        handle_error(e, logger)
 
-@router.get('/items/', response_model=List[Item], tags=["CRUD"])
-def list_items(auth=Depends(auth_handler.authenticate)):
+@router.get('/items/', 
+            response_model=List[Item],
+            tags=["CRUD"],
+            responses={
+                500: {"model": ResponseError, "description": "Internal server error."},
+                429: {"model": ResponseError, "description": "Too many requests."},
+                404: {"model": ResponseError, "description": "Not items found."},
+            })
+@limiter.limit("5/minute")
+def list_items(request: Request):#, auth=Depends(auth_handler.authenticate)):
     """Fetch all items from the database.
     
     Returns:
     - List[Item]: List of items.
     """
     try:
-        items = list(db.database.items.find())
-        for item in items: item["_id"] = str(item["_id"])
+        logger.info("Fetching all items.")
+        ans = 5/0
+        items = list(database.items.find())
+        if not items:
+            logger.warning("No items found in the database.")
+            raise HTTPException(status_code=404, detail="No items found.")
+        logger.info("Items successfully fetched.")
+        items = convert_objectid_to_str(items)
         return items
+    except pymongo.errors.PyMongoError as e:
+        # Handle any PyMongo errors here
+        logger.critical(f"Error interacting with the database: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error updating password.")
+    except RateLimitExceeded:
+        raise HTTPException(status_code=429, detail="Too many requests.")
+    except HTTPException:
+        # This is to ensure HTTPException is not caught in the generic Exception
+        raise
     except Exception as e:
-        handle_error(e)
+        handle_error(e, logger)
 
-@router.get('/items/{item_id}/', response_model=Item, tags=["CRUD"])
-def get_item(item_id: str, auth=Depends(auth_handler.authenticate)):
+@router.get('/items/{item_id}/',
+            response_model=Item,
+            tags=["CRUD"],
+            responses={
+                500: {"model": ResponseError, "description": "Internal server error."},
+                429: {"model": ResponseError, "description": "Too many requests."},
+                404: {"model": ResponseError, "description": "Item not found."},
+                400: {"model": ResponseError, "description": "Invalid item_id format."},
+            })
+@limiter.limit("5/minute")
+def get_item(item_id: str, request: Request):#, auth=Depends(auth_handler.authenticate)):
     """Fetch a single item from the database using its ID.
     
     Args:
@@ -69,19 +126,39 @@ def get_item(item_id: str, auth=Depends(auth_handler.authenticate)):
     - HTTPException: If the item is not found.
     """
     try:
-        item = db.database.items.find_one({"_id": ObjectId(item_id)})
+        logger.info(f"Fetching item with ID {item_id}.")
+        if not is_valid_objectid(item_id):
+            raise HTTPException(status_code=400, detail="Invalid item_id format.")
+        item = database.items.find_one({"_id": ObjectId(item_id)})
         if not item:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
-        item["_id"] = str(item["_id"])
+            logger.warning(f"No item found with ID {item_id}.")
+            raise HTTPException(status_code=404, detail="Item not found.")
+        logger.info(f"Item with ID {item_id} successfully fetched.")
+        item = convert_objectid_to_str(item)
         return item
+    except pymongo.errors.PyMongoError as e:
+        # Handle any PyMongo errors here
+        logger.critical(f"Error interacting with the database: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error updating password.")
+    except RateLimitExceeded:
+        raise HTTPException(status_code=429, detail="Too many requests.")
     except HTTPException:
         # This is to ensure HTTPException is not caught in the generic Exception
         raise
     except Exception as e:
-        handle_error(e)
+        handle_error(e, logger)
 
-@router.put('/items/{item_id}/', response_model=Item, tags=["CRUD"])
-def update_item(item_id: str, item_update: ItemCreate, auth=Depends(auth_handler.authenticate)):
+@router.put('/items/{item_id}/', 
+            response_model=Item,
+            tags=["CRUD"],
+            responses={
+                500: {"model": ResponseError, "description": "Internal server error."},
+                429: {"model": ResponseError, "description": "Too many requests."},
+                404: {"model": ResponseError, "description": "Item not found or not updated."},
+                400: {"model": ResponseError, "description": "Invalid item_id format."},
+            })
+@limiter.limit("5/minute")
+def update_item(item_id: str, item_update: ItemCreate, request: Request):#, auth=Depends(auth_handler.authenticate)):
     """Update an item in the database.
     
     Args:
@@ -95,19 +172,39 @@ def update_item(item_id: str, item_update: ItemCreate, auth=Depends(auth_handler
     - HTTPException: If the item is not found.
     """
     try:
-        updated_item = db.database.items.find_one_and_update({"_id": ObjectId(item_id)}, {"$set": item_update.dict()}, return_document=True)
+        logger.info(f"Updating item with ID {item_id}.")
+        if not is_valid_objectid(item_id):
+            raise HTTPException(status_code=400, detail="Invalid item_id format.")
+        updated_item = database.items.find_one_and_update({"_id": ObjectId(item_id)}, {"$set": item_update.dict()}, return_document=True)
         if not updated_item:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
-        updated_item["_id"] = str(updated_item["_id"])
+            logger.warning(f"Failed to update item with ID {item_id}.")
+            raise HTTPException(status_code=404, detail="Item not found or not updated.")
+        logger.info(f"Item with ID {item_id} successfully updated.")
+        updated_item = convert_objectid_to_str(updated_item)
         return updated_item
+    except pymongo.errors.PyMongoError as e:
+        # Handle any PyMongo errors here
+        logger.critical(f"Error interacting with the database: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error updating password.")
+    except RateLimitExceeded:
+        raise HTTPException(status_code=429, detail="Too many requests.")
     except HTTPException:
         # This is to ensure HTTPException is not caught in the generic Exception
         raise
     except Exception as e:
-        handle_error(e)
+        handle_error(e, logger)
 
-@router.patch('/items/{item_id}/', response_model=Item, tags=["CRUD"])
-def patch_item(item_id: str, item_update: ItemCreate, auth=Depends(auth_handler.authenticate)):
+@router.patch('/items/{item_id}/',
+              response_model=Item,
+              tags=["CRUD"],
+              responses={
+                  500: {"model": ResponseError, "description": "Internal server error."},
+                  429: {"model": ResponseError, "description": "Too many requests."},
+                  404: {"model": ResponseError, "description": "Item not found or not patched."},
+                  400: {"model": ResponseError, "description": "Invalid item_id format."},
+              })
+@limiter.limit("5/minute")
+def patch_item(item_id: str, item_patch: ItemPatch, request: Request):#, auth=Depends(auth_handler.authenticate)):
     """Partially update an item in the database.
     
     Args:
@@ -121,16 +218,39 @@ def patch_item(item_id: str, item_update: ItemCreate, auth=Depends(auth_handler.
     - HTTPException: If the item is not found.
     """
     try:
-        updated_item = db.database.items.find_one_and_update({"_id": ObjectId(item_id)}, {"$set": item_update.dict()}, return_document=True)
+        logger.info(f"Partially updating item with ID {item_id}.")
+        if not is_valid_objectid(item_id):
+            raise HTTPException(status_code=400, detail="Invalid item_id format.")
+        updated_item = database.items.find_one_and_update({"_id": ObjectId(item_id)}, {"$set": item_patch.dict()}, return_document=True)
         if not updated_item:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
-        updated_item["_id"] = str(updated_item["_id"])
+            logger.warning(f"Failed to patch item with ID {item_id}.")
+            raise HTTPException(status_code=404, detail="Item not found or not patched.")
+        logger.info(f"Item with ID {item_id} successfully patched.")
+        updated_item = convert_objectid_to_str(updated_item)
         return updated_item
+    except pymongo.errors.PyMongoError as e:
+        # Handle any PyMongo errors here
+        logger.critical(f"Error interacting with the database: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error updating password.")
+    except RateLimitExceeded:
+        raise HTTPException(status_code=429, detail="Too many requests.")
+    except HTTPException:
+        # This is to ensure HTTPException is not caught in the generic Exception
+        raise
     except Exception as e:
-        handle_error(e)
+        handle_error(e, logger)
 
-@router.delete('/items/{item_id}/', response_model=Item, tags=["CRUD"])
-def delete_item(item_id: str, response: Response, auth=Depends(auth_handler.authenticate)):
+@router.delete('/items/{item_id}/',
+               response_model=Item,
+               tags=["CRUD"],
+               responses={
+                   500: {"model": ResponseError, "description": "Internal server error."},
+                   429: {"model": ResponseError, "description": "Too many requests."},
+                   404: {"model": ResponseError, "description": "Item not found or not deleted."},
+                   400: {"model": ResponseError, "description": "Invalid item_id format."},
+               })
+@limiter.limit("5/minute")
+def delete_item(item_id: str, request: Request):#, auth=Depends(auth_handler.authenticate)):
     """Delete an item from the database.
     
     Args:
@@ -143,17 +263,80 @@ def delete_item(item_id: str, response: Response, auth=Depends(auth_handler.auth
     - HTTPException: If the item is not found.
     """
     try:
-        deleted_item = db.database.items.find_one_and_delete({"_id": ObjectId(item_id)})
-        if deleted_item:
-            response.status_code = status.HTTP_200_OK
-        else:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
-        # ALWAYS convert the ObjectId to str before return
-        deleted_item["_id"] = str(deleted_item["_id"])
+        logger.info(f"Deleting item with ID {item_id}.")
+        if not is_valid_objectid(item_id):
+            raise HTTPException(status_code=400, detail="Invalid item_id format.")
+        deleted_item = database.items.find_one_and_delete({"_id": ObjectId(item_id)})
+        if not deleted_item:
+            logger.warning(f"Failed to delete item with ID {item_id}.")
+            raise HTTPException(status_code=404, detail="Item not found or not deleted.")
+        logger.info(f"Item with ID {item_id} successfully deleted.")
+        deleted_item = convert_objectid_to_str(deleted_item)
         return deleted_item
+    except pymongo.errors.PyMongoError as e:
+        # Handle any PyMongo errors here
+        logger.critical(f"Error interacting with the database: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error updating password.")
+    except RateLimitExceeded:
+        raise HTTPException(status_code=429, detail="Too many requests.")
     except HTTPException:
         # This is to ensure HTTPException is not caught in the generic Exception
         raise
     except Exception as e:
-        handle_error(e)
+        handle_error(e, logger)
 
+"""
+This module serves as an example of using FastAPI's BackgroundTasks feature.
+
+BackgroundTasks allow you to run functions in the background of a request. This is particularly useful when you want to execute time-consuming tasks without making the client wait for the result. The task runs in the same process (no new processes are spawned) but is executed after the response has been sent to the client. 
+
+Advantages:
+1. Improved Response Times: By delegating lengthy tasks to the background, you can return responses to clients more swiftly.
+2. Resource Optimization: Offloading non-critical tasks to run post-response means the main thread remains unblocked, and can process other incoming requests.
+3. Better User Experience: Especially for web applications, users do not need to wait for long operations to complete, ensuring smoother interactions.
+
+Using BackgroundTasks is essential when you want to ensure that the user isn't kept waiting, while still completing all necessary operations. It's a balance between responsiveness and completeness.
+
+Note: Although the task is running in the background, if the main process stops (e.g., the server crashes or is stopped), the background tasks will also be terminated. It's important to ensure that these tasks are resilient and can handle such interruptions.
+"""
+
+from fastapi import BackgroundTasks
+import time
+
+def simulate_email_sending(email: str):
+    """Simulate email sending delay."""
+    time.sleep(5)
+    print(f"Email sent to {email}")
+
+@router.post('/send-email/',
+             tags=["Background Tasks"],
+             responses={
+                 500: {"model": ResponseError, "description": "Internal server error."},
+                 429: {"model": ResponseError, "description": "Too many requests."}
+             })
+@limiter.limit("5/minute")
+def send_email_background(email: str, background_tasks: BackgroundTasks, request: Request):#, auth=Depends(auth_handler.authenticate)):
+    """Endpoint to send an email in the background.
+    
+    Args:
+    - email (str): Email address to which the email will be sent.
+    
+    Returns:
+    - dict: Confirmation message.
+    """
+    try:
+        logger.info(f"Queuing email for {email}.")
+        background_tasks.add_task(simulate_email_sending, email)
+        logger.info(f"Email for {email} has been queued successfully.")
+        return {"message": "Email is being sent in the background"} # Example response body
+    except pymongo.errors.PyMongoError as e:
+        # Handle any PyMongo errors here
+        logger.critical(f"Error interacting with the database: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error updating password.")
+    except RateLimitExceeded:
+        raise HTTPException(status_code=429, detail="Too many requests.")
+    except HTTPException:
+        # This is to ensure HTTPException is not caught in the generic Exception
+        raise
+    except Exception as e:
+        handle_error(e, logger)

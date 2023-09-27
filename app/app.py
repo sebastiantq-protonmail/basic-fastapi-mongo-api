@@ -1,17 +1,31 @@
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 # Routes and config modules import
-from app.api.config.env import API_NAME
+from app.api.config.env import API_NAME, PRODUCTION_SERVER_URL, DEVELOPMENT_SERVER_URL
+from app.api.config.limiter import limiter
 from app.api.routes.routes import router
+
+from fastapi.openapi.utils import get_openapi
+
+title=f'{API_NAME} API'
+description=f'{API_NAME} API description.'
+version='0.0.1'
 
 app = FastAPI(
     openapi_url=f'/api/v1/{API_NAME}/openapi.json',
     docs_url=f'/api/v1/{API_NAME}/docs',
-    title=f'{API_NAME} API',
-    description='ENTER THE DESCRIPTION.',
-    version='0.0.1',
+    redoc_url=f'/api/v1/{API_NAME}/redoc',
+    servers=[
+        {"url": PRODUCTION_SERVER_URL, "description": "Production server"},
+        {"url": DEVELOPMENT_SERVER_URL, "description": "Development server"},
+    ],
+    title=title,
+    description=description,
+    version=version,
     terms_of_service='',
     contact={
         'name': '',
@@ -23,6 +37,27 @@ app = FastAPI(
         'url': '',
     },
 )
+
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    openapi_schema = get_openapi(
+        title=title,
+        version=version,
+        description=description,
+        routes=app.routes,
+    )
+    openapi_schema["info"]["x-logo"] = {
+        "url": "..."
+    }
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+app.openapi = custom_openapi
+
+app.state.limiter = limiter
+app.add_middleware(SlowAPIMiddleware)
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # CORS middleware configuration
 origins = ['*']

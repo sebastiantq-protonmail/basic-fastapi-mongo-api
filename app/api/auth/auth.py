@@ -37,7 +37,7 @@ class AuthenticationHandler:
         """
         return self.pwd_context.verify(plain_password, hashed_password)
 
-    def create_token(self, user_id: str) -> str:
+    def create_token(self, user: dict) -> str:
         """Generates a JWT token for the given user_id.
         
         Args:
@@ -50,25 +50,25 @@ class AuthenticationHandler:
         payload = {
             'exp': expiration,
             'iat': datetime.utcnow(),
-            'sub': user_id
+            'user': user  # Storing entire user object in the token
         }
         return jwt.encode(payload, JWT_SECRET, algorithm='HS256')
 
-    def decode_token(self, token: str) -> Union[str, None]:
+    def decode_token(self, token: str) -> Union[dict, None]:
         """Decodes a JWT token and returns its payload.
         
         Args:
         - token (str): JWT token.
         
         Returns:
-        - str: User ID if verification is successful.
+        - dict: User dict if verification is successful.
         
         Raises:
         - HTTPException: If token is expired or invalid.
         """
         try:
             payload = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
-            return payload['sub']
+            return payload['user']
         except jwt.ExpiredSignatureError:
             raise HTTPException(status_code=401, detail='Token has expired')
         except jwt.InvalidTokenError:
