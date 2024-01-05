@@ -83,7 +83,6 @@ def list_items(request: Request):#, auth=Depends(auth_handler.authenticate)):
     """
     try:
         logger.info("Fetching all items.")
-        ans = 5/0
         items = list(database.items.find())
         if not items:
             logger.warning("No items found in the database.")

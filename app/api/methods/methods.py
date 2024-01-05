@@ -75,7 +75,7 @@ def handle_error(e: Exception, logger: Logger):
     - HTTPException: With a 500 status code.
     """
     logger.error(f"Error : {str(e)}")
-    if IS_PRODUCTION and (not hasattr(e, 'status_code') or (hasattr(e, 'status_code') and e.status_code == 500)): # Handling HTTP and no HTTP exceptions
+    if int(IS_PRODUCTION) and (not hasattr(e, 'status_code') or (hasattr(e, 'status_code') and e.status_code == 500)): # Handling HTTP and no HTTP exceptions
         logger.info("Creating incidence on JIRA.")
         bugReportsInstance.bugReports(JIRA_PROJECT_ID, "[DEVELOPER]", str(e))
     raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
