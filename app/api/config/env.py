@@ -6,8 +6,10 @@ import os
 API_NAME = os.getenv('API_NAME')
 JWT_SECRET = os.getenv('JWT_SECRET') # The JWT secret string
 MONGO_CLIENT = os.getenv('MONGO_CLIENT') # Something like: mongodb://[username:password@]host1[:port1][,...hostN[:portN]][/[defaultauthdb][?options]]
+DB_NAME = os.getenv('DB_NAME')
 PRODUCTION_SERVER_URL = os.getenv('PRODUCTION_SERVER_URL')
 DEVELOPMENT_SERVER_URL = os.getenv('DEVELOPMENT_SERVER_URL')
+LOCALHOST_SERVER_URL = os.getenv('LOCALHOST_SERVER_URL')
 IS_PRODUCTION = os.getenv('IS_PRODUCTION') # Boolean to determine if is prod environment or nah
 
 # IncidentsBug library configuration

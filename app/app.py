@@ -5,7 +5,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 # Routes and config modules import
-from app.api.config.env import API_NAME, PRODUCTION_SERVER_URL, DEVELOPMENT_SERVER_URL
+from app.api.config.env import API_NAME, PRODUCTION_SERVER_URL, DEVELOPMENT_SERVER_URL, LOCALHOST_SERVER_URL
 from app.api.config.limiter import limiter
 from app.api.routes.routes import router
 
@@ -14,28 +14,34 @@ from fastapi.openapi.utils import get_openapi
 title=f'{API_NAME} API'
 description=f'{API_NAME} API description.'
 version='0.0.1'
+servers=[
+    {"url": LOCALHOST_SERVER_URL, "description": "Localhost server"},
+    {"url": DEVELOPMENT_SERVER_URL, "description": "Development server"},
+    {"url": PRODUCTION_SERVER_URL, "description": "Production server"},
+]
+terms_of_service = 'https://www.dsinno.io/'
+contact = {
+    'name': 'Design Systems Inno. (DSI.)',
+    'url': 'https://www.dsinno.io/',
+    'email': 'gerencia@dsinno.io',
+}
+license_info = {
+    'name': 'MIT',
+    'url': 'https://opensource.org/licenses/MIT',
+}
+
 
 app = FastAPI(
     openapi_url=f'/api/v1/{API_NAME}/openapi.json',
     docs_url=f'/api/v1/{API_NAME}/docs',
     redoc_url=f'/api/v1/{API_NAME}/redoc',
-    servers=[
-        {"url": PRODUCTION_SERVER_URL, "description": "Production server"},
-        {"url": DEVELOPMENT_SERVER_URL, "description": "Development server"},
-    ],
+    servers=servers,
     title=title,
     description=description,
     version=version,
-    terms_of_service='',
-    contact={
-        'name': '',
-        'url': '',
-        'email': '',
-    },
-    license_info={
-        'name': '',
-        'url': '',
-    },
+    terms_of_service=terms_of_service,
+    contact=contact,
+    license_info=license_info,
 )
 
 def custom_openapi():
@@ -46,9 +52,10 @@ def custom_openapi():
         version=version,
         description=description,
         routes=app.routes,
+        servers=servers,
     )
     openapi_schema["info"]["x-logo"] = {
-        "url": "..."
+        "url": "..." # Add your logo URL here
     }
     app.openapi_schema = openapi_schema
     return app.openapi_schema
